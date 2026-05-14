@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+data/session.json
+data/last-stock.json
+data/debug/
+*.js.map

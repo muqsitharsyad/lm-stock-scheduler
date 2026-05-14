@@ -1,0 +1,16 @@
+services:
+  lm-stock-scheduler:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Mount data/ so session, snapshots, and debug files persist across container restarts
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Jakarta
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -1,0 +1,30 @@
+{
+  "name": "lm-stock-scheduler",
+  "version": "1.0.0",
+  "description": "Logam Mulia gold stock monitor with Telegram notifications",
+  "main": "dist/interfaces/cli/index.js",
+  "scripts": {
+    "dev": "ts-node src/interfaces/cli/index.ts",
+    "build": "tsc",
+    "start": "node dist/interfaces/cli/index.js"
+  },
+  "ts-node": {
+    "transpileOnly": true
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "axios-cookiejar-support": "^4.0.7",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "playwright": "1.44.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tough-cookie": "^4.1.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/tough-cookie": "^4.0.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,204 @@
+/**
+ * HTTP-based stock scraper — replaces Playwright browser automation.
+ *
+ * The /id/purchase/gold page is publicly accessible (no login required).
+ * Stock data is server-rendered HTML: we use axios + tough-cookie for session
+ * management and cheerio for HTML parsing.
+ *
+ * Speed: ~200-500ms per location vs ~10-30s with Playwright.
+ */
+
+import axios from 'axios';
+import { wrapper } from 'axios-cookiejar-support';
+import { CookieJar } from 'tough-cookie';
+import * as cheerio from 'cheerio';
+import { LocationStock, StockItem } from '../../app/types/stock';
+import { AppConfig } from '../../app/config/env';
+import { logger } from '../../app/utils/logger';
+import { formatIsoWithJakarta } from '../../app/utils/time';
+import { sleep } from '../../app/utils/retry';
+import { createStockItem } from './parsers';
+
+const BASE_URL = 'https://www.logammulia.com';
+const STOCK_URL = `${BASE_URL}/id/purchase/gold`;
+const LOCATIONS_URL = `${BASE_URL}/change-location`;
+const CHANGE_LOCATION_URL = `${BASE_URL}/do-change-location`;
+
+const REQUEST_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
+  Referer: STOCK_URL,
+};
+
+interface LocationOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * Creates a fresh axios instance with its own cookie jar.
+ * The jar persists cookies across requests (acts like a browser session).
+ */
+function createClient() {
+  const jar = new CookieJar();
+  return wrapper(
+    axios.create({
+      jar,
+      withCredentials: true,
+      timeout: 20_000,
+      headers: REQUEST_HEADERS,
+    }),
+  );
+}
+
+/**
+ * Scrapes stock for all (or configured) butik locations using direct HTTP requests.
+ *
+ * Flow per run:
+ *  1. GET /id/purchase/gold  → obtain session cookie + CSRF token
+ *  2. GET /change-location   → parse all available butik options
+ *  3. For each location:
+ *       POST /do-change-location  → set active location in session
+ *       GET  /id/purchase/gold    → get stock HTML for that location
+ *       Parse .ctr rows           → extract weight + availability
+ */
+export async function scrapeAllLocationsHttp(config: AppConfig): Promise<LocationStock[]> {
+  const client = createClient();
+
+  // ── Step 1: Initialise session + read CSRF token ──────────────────────────
+  logger.debug('[HTTP] Initialising session...');
+  let csrfToken: string | null = null;
+  try {
+    const initResp = await client.get<string>(STOCK_URL);
+    const $init = cheerio.load(initResp.data);
+    csrfToken = $init('meta[name="_token"]').attr('content') ?? null;
+    if (!csrfToken) {
+      logger.warn('[HTTP] CSRF token not found in page meta — location change may fail');
+    } else {
+      logger.debug('[HTTP] Session initialised, CSRF token obtained');
+    }
+  } catch (err) {
+    logger.error('[HTTP] Failed to initialise session:', err);
+    return [];
+  }
+
+  // ── Step 2: Get all available locations ───────────────────────────────────
+  let available: LocationOption[] = [];
+  try {
+    const locResp = await client.get<string>(LOCATIONS_URL);
+    const $loc = cheerio.load(locResp.data);
+    $loc('select#location option').each((_, el) => {
+      const value = $loc(el).attr('value')?.trim() ?? '';
+      const label = $loc(el).text().trim();
+      if (value) available.push({ value, label });
+    });
+    logger.info(`[HTTP] ${available.length} location(s) found`);
+  } catch (err) {
+    logger.error('[HTTP] Failed to fetch location list:', err);
+    return [];
+  }
+
+  if (available.length === 0) {
+    logger.error('[HTTP] Location list is empty — change-location selector may need updating');
+    return [];
+  }
+
+  // ── Step 3: Filter by target locations if configured ─────────────────────
+  let targets = available;
+  if (config.lmTargetLocations.length > 0) {
+    targets = available.filter((loc) =>
+      config.lmTargetLocations.some(
+        (t) =>
+          loc.value.toLowerCase() === t.toLowerCase() ||
+          loc.label.toLowerCase().includes(t.toLowerCase()),
+      ),
+    );
+    if (targets.length === 0) {
+      logger.warn('[HTTP] None of LM_TARGET_LOCATIONS matched — scraping all');
+      targets = available;
+    } else {
+      logger.info(`[HTTP] Filtered to ${targets.length} target location(s)`);
+    }
+  }
+
+  // ── Step 4: Scrape each location ──────────────────────────────────────────
+  const results: LocationStock[] = [];
+
+  for (const loc of targets) {
+    logger.info(`[HTTP] ── ${loc.label} (${loc.value})`);
+    try {
+      // Set active location via POST
+      if (csrfToken) {
+        await client.post(
+          CHANGE_LOCATION_URL,
+          new URLSearchParams({ _token: csrfToken, location: loc.value }).toString(),
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+        );
+      }
+
+      // Fetch stock page for this location
+      const stockResp = await client.get<string>(STOCK_URL);
+      const items = parseStockHtml(stockResp.data, loc.label);
+
+      results.push({ location: loc.label, items, scrapedAt: formatIsoWithJakarta() });
+      logger.info(`[HTTP] "${loc.label}" → ${items.length} item(s)`);
+
+      // Brief pause to be polite to the server
+      await sleep(300);
+    } catch (err) {
+      logger.error(`[HTTP] Failed to scrape "${loc.label}":`, err);
+      results.push({ location: loc.label, items: [], scrapedAt: formatIsoWithJakarta() });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Parses stock HTML page and returns stock items.
+ *
+ * DOM structure (confirmed from checkout.html):
+ *   .cart-table .ct-body .ctr         — each product row
+ *   .ctr.disabled                     — no stock (qty = 0)
+ *   .ngc-text (first text node)       — "Emas Batangan - 5 gr"
+ *   span.no-stock                     — "Belum tersedia" badge
+ *
+ * Note: The website does NOT expose actual stock count anywhere in the HTML or
+ * via JavaScript. Only binary availability (has stock / no stock) is available.
+ */
+function parseStockHtml(html: string, locationLabel: string) {
+  const $ = cheerio.load(html);
+  const items: StockItem[] = [];
+
+  $('.cart-table .ct-body .ctr').each((_, row) => {
+    const $row = $(row);
+    const isDisabled = $row.hasClass('disabled');
+    const hasSoldOut = $row.find('span.no-stock').length > 0;
+
+    // Extract weight from first text node of .ngc-text ("Emas Batangan - 5 gr")
+    const ngcText = $row.find('.ngc-text').first();
+    const rawWeight = ngcText
+      .contents()
+      .filter((_, n) => n.type === 'text')
+      .first()
+      .text()
+      .trim();
+
+    if (!rawWeight) return;
+
+    const soldOut = isDisabled || hasSoldOut;
+    items.push(
+      createStockItem(rawWeight, soldOut ? 0 : 1, soldOut ? 'belum tersedia' : undefined),
+    );
+  });
+
+  if (items.length === 0) {
+    logger.warn(
+      `[HTTP] No stock rows found for "${locationLabel}" — page structure may have changed`,
+    );
+  }
+
+  return items;
+}
