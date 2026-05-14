@@ -16,8 +16,9 @@ function optionalEnv(key: string, defaultValue: string): string {
 }
 
 export interface AppConfig {
-  lmEmail: string;
-  lmPassword: string;
+  /** Optional — login no longer required for HTTP scraping (page is public). */
+  lmEmail: string | undefined;
+  lmPassword: string | undefined;
   lmTargetLocations: string[];
   telegramBotToken: string;
   telegramChatId: string;
@@ -35,8 +36,9 @@ export interface AppConfig {
 }
 
 export function loadConfig(): AppConfig {
-  const lmEmail = requireEnv('LM_EMAIL');
-  const lmPassword = requireEnv('LM_PASSWORD');
+  // LM_EMAIL and LM_PASSWORD are no longer required — stock page is public.
+  const lmEmail = process.env['LM_EMAIL'] || undefined;
+  const lmPassword = process.env['LM_PASSWORD'] || undefined;
   const telegramBotToken = requireEnv('TELEGRAM_BOT_TOKEN');
   const telegramChatId = requireEnv('TELEGRAM_CHAT_ID');
 

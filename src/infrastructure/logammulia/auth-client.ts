@@ -52,6 +52,10 @@ export async function login(page: Page, config: AppConfig): Promise<void> {
     'navigate to login page',
   );
 
+  if (!config.lmEmail || !config.lmPassword) {
+    throw new Error('[Auth] LM_EMAIL and LM_PASSWORD are required for login but are not set');
+  }
+
   logger.info('[Auth] Filling login credentials...');
   try {
     await page.waitForSelector(SELECTORS.login.emailInput, { timeout: 15_000 });
