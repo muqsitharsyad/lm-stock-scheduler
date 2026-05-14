@@ -20,8 +20,21 @@ export interface AppConfig {
   lmEmail: string | undefined;
   lmPassword: string | undefined;
   lmTargetLocations: string[];
+  /**
+   * Numeric gramasi to monitor (e.g. [0.5, 1, 2, 3]).
+   * Empty array means monitor ALL gramasi.
+   */
+  lmTargetWeights: number[];
   telegramBotToken: string;
   telegramChatId: string;
+  /**
+   * When true, each butik is sent to its own Telegram Forum Topic.
+   * The group must have Topics enabled.
+   * Topic IDs are persisted in topicsFile.
+   */
+  telegramUseTopics: boolean;
+  /** Port for the built-in HTTP status page. 0 = disabled. */
+  statusPort: number;
   checkIntervalSeconds: number;
   timezone: string;
   headless: boolean;
@@ -32,6 +45,8 @@ export interface AppConfig {
   dataDir: string;
   sessionFile: string;
   snapshotFile: string;
+  /** Persisted map of location name → Telegram message_thread_id. */
+  topicsFile: string;
   debugDir: string;
 }
 
@@ -50,6 +65,17 @@ export function loadConfig(): AppConfig {
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
+  const lmTargetWeightsRaw = optionalEnv('LM_TARGET_WEIGHTS', '');
+  const lmTargetWeights = lmTargetWeightsRaw
+    .split(',')
+    .map((w) => parseFloat(w.trim().replace(',', '.')))
+    .filter((w) => !isNaN(w) && w > 0);
+
+  const telegramUseTopics =
+    optionalEnv('TELEGRAM_USE_TOPICS', 'false').toLowerCase() === 'true';
+
+  const statusPort = parseInt(optionalEnv('STATUS_PORT', '3200'), 10);
+
   const checkIntervalSeconds = parseInt(optionalEnv('CHECK_INTERVAL_SECONDS', '60'), 10);
   const timezone = optionalEnv('TZ', 'Asia/Jakarta');
   const headless = optionalEnv('HEADLESS', 'true').toLowerCase() !== 'false';
@@ -65,8 +91,11 @@ export function loadConfig(): AppConfig {
     lmEmail,
     lmPassword,
     lmTargetLocations,
+    lmTargetWeights,
     telegramBotToken,
     telegramChatId,
+    telegramUseTopics,
+    statusPort,
     checkIntervalSeconds,
     timezone,
     headless,
@@ -76,6 +105,7 @@ export function loadConfig(): AppConfig {
     dataDir,
     sessionFile: `${dataDir}/session.json`,
     snapshotFile: `${dataDir}/last-stock.json`,
+    topicsFile: `${dataDir}/topics.json`,
     debugDir: `${dataDir}/debug`,
   };
 }

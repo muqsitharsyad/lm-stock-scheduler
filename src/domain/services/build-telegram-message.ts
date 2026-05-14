@@ -12,29 +12,22 @@ import { formatTime } from '../../app/utils/time';
  *   Gramasi:
  *   - 5 gr
  *   - <b>10 gr (new stock! 🆕)</b>
- *   - <s>25 gr</s>
  *
  *   Update Jam: 11:08:40 WIB ⏰
+ *   🔗 <a href="...">Beli Sekarang</a>
  *
  * Rendering rules:
  *   - New stock (0 → 1) : bold + 🆕
  *   - Available (unchanged) : plain text
- *   - Out of stock (qty = 0)  : strikethrough
+ *   - Out of stock           : hidden (not shown in message)
  */
 export function buildTelegramMessage(change: LocationStockChange): string {
   const time = formatTime(new Date(change.scrapedAt));
-  const newWeights = new Set(change.changes.map((c) => c.weight));
 
-  const gramasiLines = change.allItems
-    .map(({ weight, available }) => {
-      if (!available) {
-        return `- <s>${weight}</s>`;
-      }
-      if (newWeights.has(weight)) {
-        return `- <b>${weight} (new stock! 🆕)</b>`;
-      }
-      return `- ${weight}`;
-    })
+  const availableItems = change.allItems.filter(({ available }) => available);
+
+  const gramasiLines = availableItems
+    .map(({ weight }) => `- ${weight}`)
     .join('\n');
 
   return [
@@ -46,5 +39,6 @@ export function buildTelegramMessage(change: LocationStockChange): string {
     gramasiLines,
     '',
     `Update Jam: ${time} WIB ⏰`,
+    `🔗 <a href="https://www.logammulia.com/id/purchase/gold">Beli di ${change.location}</a>`,
   ].join('\n');
 }

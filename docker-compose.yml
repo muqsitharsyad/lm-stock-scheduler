@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      - "${STATUS_PORT:-3200}:${STATUS_PORT:-3200}"
     volumes:
       # Mount data/ so session, snapshots, and debug files persist across container restarts
       - ./data:/app/data

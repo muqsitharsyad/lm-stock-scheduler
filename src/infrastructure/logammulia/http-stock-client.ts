@@ -140,7 +140,7 @@ export async function scrapeAllLocationsHttp(config: AppConfig): Promise<Locatio
 
       // Fetch stock page for this location
       const stockResp = await client.get<string>(STOCK_URL);
-      const items = parseStockHtml(stockResp.data, loc.label);
+      const items = parseStockHtml(stockResp.data, loc.label, config.lmTargetWeights);
 
       results.push({ location: loc.label, items, scrapedAt: formatIsoWithJakarta() });
       logger.info(`[HTTP] "${loc.label}" → ${items.length} item(s)`);
@@ -157,7 +157,7 @@ export async function scrapeAllLocationsHttp(config: AppConfig): Promise<Locatio
 }
 
 /**
- * Parses stock HTML page and returns stock items.
+ * Parses stock HTML page and returns stock items, optionally filtered to target weights.
  *
  * DOM structure (confirmed from checkout.html):
  *   .cart-table .ct-body .ctr         — each product row
@@ -168,7 +168,11 @@ export async function scrapeAllLocationsHttp(config: AppConfig): Promise<Locatio
  * Note: The website does NOT expose actual stock count anywhere in the HTML or
  * via JavaScript. Only binary availability (has stock / no stock) is available.
  */
-function parseStockHtml(html: string, locationLabel: string) {
+function parseStockHtml(
+  html: string,
+  locationLabel: string,
+  targetWeights: number[],
+): StockItem[] {
   const $ = cheerio.load(html);
   const items: StockItem[] = [];
 
@@ -188,6 +192,9 @@ function parseStockHtml(html: string, locationLabel: string) {
 
     if (!rawWeight) return;
 
+    // Filter by target weights if configured
+    if (targetWeights.length > 0 && !matchesTargetWeight(rawWeight, targetWeights)) return;
+
     const soldOut = isDisabled || hasSoldOut;
     items.push(
       createStockItem(rawWeight, soldOut ? 0 : 1, soldOut ? 'belum tersedia' : undefined),
@@ -196,9 +203,20 @@ function parseStockHtml(html: string, locationLabel: string) {
 
   if (items.length === 0) {
     logger.warn(
-      `[HTTP] No stock rows found for "${locationLabel}" — page structure may have changed`,
+      `[HTTP] No stock rows found for "${locationLabel}" — page structure may have changed or all gramasi filtered out`,
     );
   }
 
   return items;
+}
+
+/**
+ * Returns true if the weight string (e.g. "5 gr" or "0,5 gr") matches any of the target values.
+ * Handles both dot and comma as decimal separator.
+ */
+function matchesTargetWeight(weightStr: string, targets: number[]): boolean {
+  const match = weightStr.match(/(\d+[,.]?\d*)/);
+  if (!match) return false;
+  const numeric = parseFloat(match[1].replace(',', '.'));
+  return targets.some((t) => Math.abs(t - numeric) < 0.001);
 }
