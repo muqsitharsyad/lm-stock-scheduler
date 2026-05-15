@@ -139,57 +139,22 @@ async function saveCachedLocations(locations: LocationOption[]): Promise<void> {
   }
 }
 
-/** Max parallel HTTP clients scraping locations simultaneously. */
-const SCRAPE_CONCURRENCY = 5;
-
-/**
- * Scrapes a single location using its own independent HTTP client.
- * Each call does 3 requests: GET page (session+CSRF) → POST switch location → GET stock page.
- * Safe to run in parallel — no shared state between calls.
- */
-async function scrapeLocationFresh(
-  loc: LocationOption,
-  config: AppConfig,
-): Promise<LocationStock> {
-  const client = createClient();
-
-  // 1. Initialise own session + extract CSRF token
-  const initResp = await client.get<string>(STOCK_URL);
-  const $init = cheerio.load(initResp.data);
-  const csrfToken = $init('meta[name="_token"]').attr('content') ?? null;
-
-  // 2. Switch server-side session to target location
-  if (csrfToken) {
-    await client.post(
-      CHANGE_LOCATION_URL,
-      new URLSearchParams({ _token: csrfToken, location: loc.value }).toString(),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
-    );
-  } else {
-    logger.warn(`[HTTP] CSRF token missing for "${loc.label}" — location switch may not work`);
-  }
-
-  // 3. Fetch stock page for this location
-  const stockResp = await client.get<string>(STOCK_URL);
-  const items = parseStockHtml(stockResp.data, loc.label, config.lmTargetWeights);
-
-  logger.info(`[HTTP] "${loc.label}" → ${items.length} item(s)`);
-  return { location: loc.label, items, scrapedAt: formatIsoWithJakarta() };
-}
-
 export async function scrapeAllLocationsHttp(
   config: AppConfig,
   /** Called immediately when each location finishes — enables realtime per-butik notifications. */
   onResult?: (result: LocationStock) => void,
 ): Promise<LocationStock[]> {
-  // Discovery client: used only to retrieve the full location list.
+  // Single shared client — reused for all requests so Akamai sees ONE session, not N fresh ones.
   const client = createClient();
 
-  // ── Step 1: Initialise discovery session ─────────────────────────────────
-  logger.debug('[HTTP] Initialising discovery session...');
+  // ── Step 1: Initialise session + extract CSRF ─────────────────────────────
+  logger.debug('[HTTP] Initialising session...');
+  let csrfToken: string | null = null;
   try {
-    await client.get(STOCK_URL);
-    logger.debug('[HTTP] Discovery session ready');
+    const initResp = await client.get<string>(STOCK_URL);
+    const $init = cheerio.load(initResp.data);
+    csrfToken = $init('meta[name="_token"]').attr('content') ?? null;
+    logger.debug(`[HTTP] Session ready, CSRF: ${csrfToken ? 'found' : 'not found'}`);
   } catch (err) {
     const httpStatus = (err as { response?: { status?: number } }).response?.status;
     const msg = httpStatus
@@ -263,42 +228,48 @@ export async function scrapeAllLocationsHttp(
     }
   }
 
-  // ── Step 4: Scrape each location concurrently ────────────────────────────
-  logger.info(`[HTTP] Scraping ${targets.length} location(s) with concurrency=${SCRAPE_CONCURRENCY}`);
+  // ── Step 4: Sequential scraping using the shared session ─────────────────
+  // One client, one session — no parallel fresh clients that trigger Akamai WAF.
+  logger.info(`[HTTP] Scraping ${targets.length} location(s) sequentially (shared session)`);
 
-  const results: LocationStock[] = new Array(targets.length);
-  let taskIndex = 0;
+  const results: LocationStock[] = [];
 
-  /**
-   * Worker function: each worker picks the next unstarted location from the
-   * shared index and scrapes it. Workers run concurrently, up to SCRAPE_CONCURRENCY.
-   * (index++ is safe because Node.js is single-threaded — no race condition.)
-   */
-  async function worker() {
-    while (taskIndex < targets.length) {
-      const i = taskIndex++;
-      const loc = targets[i];
-      logger.debug(`[HTTP] ── ${loc.label} (${loc.value})`);
-      try {
-        const result = await scrapeLocationFresh(loc, config);
-        results[i] = result;
-        onResult?.(result); // fire callback immediately — don't await
-      } catch (err) {
-        logger.error(`[HTTP] Failed to scrape "${loc.label}":`, err);
-        const failed: LocationStock = {
-          location: loc.label,
-          items: [],
-          scrapedAt: formatIsoWithJakarta(),
-        };
-        results[i] = failed;
-        onResult?.(failed);
+  for (const loc of targets) {
+    logger.debug(`[HTTP] ── ${loc.label} (${loc.value})`);
+    try {
+      // Switch server-side session to this location
+      if (csrfToken) {
+        await client.post(
+          CHANGE_LOCATION_URL,
+          new URLSearchParams({ _token: csrfToken, location: loc.value }).toString(),
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+        );
+      } else {
+        logger.warn(`[HTTP] No CSRF token — location switch may not work for "${loc.label}"`);
       }
+
+      // Small delay to appear human-like and avoid rate-limit triggers
+      await sleep(300);
+
+      // Fetch stock page for this location; also refresh CSRF for next iteration
+      const stockResp = await client.get<string>(STOCK_URL);
+      const $stock = cheerio.load(stockResp.data);
+      const newCsrf = $stock('meta[name="_token"]').attr('content');
+      if (newCsrf) csrfToken = newCsrf;
+
+      const items = parseStockHtml(stockResp.data, loc.label, config.lmTargetWeights);
+      logger.info(`[HTTP] "${loc.label}" → ${items.length} item(s)`);
+
+      const result: LocationStock = { location: loc.label, items, scrapedAt: formatIsoWithJakarta() };
+      results.push(result);
+      onResult?.(result);
+    } catch (err) {
+      logger.error(`[HTTP] Failed to scrape "${loc.label}":`, err);
+      const failed: LocationStock = { location: loc.label, items: [], scrapedAt: formatIsoWithJakarta() };
+      results.push(failed);
+      onResult?.(failed);
     }
   }
-
-  await Promise.all(
-    Array.from({ length: Math.min(SCRAPE_CONCURRENCY, targets.length) }, () => worker()),
-  );
 
   return results;
 }
