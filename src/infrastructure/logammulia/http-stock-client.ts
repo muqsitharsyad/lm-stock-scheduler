@@ -191,8 +191,12 @@ export async function scrapeAllLocationsHttp(
     await client.get(STOCK_URL);
     logger.debug('[HTTP] Discovery session ready');
   } catch (err) {
-    logger.error('[HTTP] Failed to initialise session:', err);
-    return [];
+    const httpStatus = (err as { response?: { status?: number } }).response?.status;
+    const msg = httpStatus
+      ? `HTTP ${httpStatus} dari ${STOCK_URL} — halaman utama diblok (Akamai WAF atau server down)`
+      : `Network error saat akses ${STOCK_URL}: ${(err as Error).message}`;
+    logger.error(`[HTTP] Failed to initialise session: ${msg}`);
+    throw new Error(msg);
   }
 
   // ── Step 2: Get all available locations ───────────────────────────────────

@@ -101,13 +101,13 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     // Wait for all in-flight notifications before persisting snapshot
     await Promise.allSettled(notificationPromises);
 
-    // If scraping returned 0 results, the whole run is considered failed
-    // (likely 403/block from the server — don't overwrite the last good snapshot)
+    // Safety net: if no results came back (shouldn't happen after init-session now throws),
+    // treat as failure so we don't overwrite last good snapshot
     if (allResults.length === 0) {
       status.lastCheckAt = new Date();
       status.lastCheckSuccess = false;
       status.errorCount++;
-      const msg = 'Scraping returned 0 results — kemungkinan 403 dari server atau IP diblok Akamai';
+      const msg = 'Scraping returned 0 results (tidak ada lokasi yang ter-scrape)';
       status.lastError = msg;
       logger.error(`[CheckStock] ${msg}`);
       return;
@@ -129,6 +129,8 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     status.lastCheckAt = new Date();
     status.lastCheckSuccess = false;
     status.errorCount++;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    status.lastError = errMsg;
     logger.error('[CheckStock] Unhandled error during stock check:', err);
     throw err;
   }
