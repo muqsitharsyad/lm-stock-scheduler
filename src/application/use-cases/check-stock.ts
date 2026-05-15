@@ -101,6 +101,16 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     // Wait for all in-flight notifications before persisting snapshot
     await Promise.allSettled(notificationPromises);
 
+    // If scraping returned 0 results, the whole run is considered failed
+    // (likely 403/block from the server — don't overwrite the last good snapshot)
+    if (allResults.length === 0) {
+      status.lastCheckAt = new Date();
+      status.lastCheckSuccess = false;
+      status.errorCount++;
+      logger.error('[CheckStock] Scraping returned 0 results — snapshot NOT overwritten');
+      return;
+    }
+
     // Log summary
     const increased = notificationPromises.length;
     if (increased === 0) {

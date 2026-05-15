@@ -27,9 +27,32 @@ const CHANGE_LOCATION_URL = `${BASE_URL}/do-change-location`;
 const REQUEST_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+  'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Cache-Control': 'max-age=0',
   Referer: STOCK_URL,
+  'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'document',
+  'sec-fetch-mode': 'navigate',
+  'sec-fetch-site': 'same-origin',
+  'sec-fetch-user': '?1',
+  'upgrade-insecure-requests': '1',
+};
+
+/**
+ * Override headers specifically for the /change-location AJAX endpoint.
+ * This is a Fancybox AJAX popup — the server (Akamai WAF) expects AJAX headers,
+ * not full-page navigation headers.
+ */
+const AJAX_HEADERS = {
+  ...REQUEST_HEADERS,
+  Accept: '*/*',
+  'X-Requested-With': 'XMLHttpRequest',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
 };
 
 interface LocationOption {
@@ -123,7 +146,7 @@ export async function scrapeAllLocationsHttp(
   // ── Step 2: Get all available locations ───────────────────────────────────
   let available: LocationOption[] = [];
   try {
-    const locResp = await client.get<string>(LOCATIONS_URL);
+    const locResp = await client.get<string>(LOCATIONS_URL, { headers: AJAX_HEADERS });
     const $loc = cheerio.load(locResp.data);
     $loc('select#location option').each((_, el) => {
       const value = $loc(el).attr('value')?.trim() ?? '';
