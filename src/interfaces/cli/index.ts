@@ -4,6 +4,7 @@ import { ensureDir } from '../../app/utils/file';
 import { checkStock } from '../../application/use-cases/check-stock';
 import { runWithInterval } from '../scheduler/interval-runner';
 import { startStatusServer, BotStatus } from '../web/status-server';
+import { closePersistentBrowser } from '../../infrastructure/logammulia/stock-scraper';
 
 async function main(): Promise<void> {
   const config = getConfig();
@@ -47,12 +48,13 @@ async function main(): Promise<void> {
     startStatusServer(status, config);
   }
 
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     logger.info(`[App] Received ${signal} — shutting down gracefully...`);
+    await closePersistentBrowser();
     process.exit(0);
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   await runWithInterval(() => checkStock(config, status), config);
 }
