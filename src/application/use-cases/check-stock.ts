@@ -107,7 +107,9 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
       status.lastCheckAt = new Date();
       status.lastCheckSuccess = false;
       status.errorCount++;
-      logger.error('[CheckStock] Scraping returned 0 results — snapshot NOT overwritten');
+      const msg = 'Scraping returned 0 results — kemungkinan 403 dari server atau IP diblok Akamai';
+      status.lastError = msg;
+      logger.error(`[CheckStock] ${msg}`);
       return;
     }
 
@@ -122,6 +124,7 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     logger.info('[CheckStock] ════ Stock check complete ════');
     status.lastCheckAt = new Date();
     status.lastCheckSuccess = true;
+    status.lastError = null;
   } catch (err) {
     status.lastCheckAt = new Date();
     status.lastCheckSuccess = false;

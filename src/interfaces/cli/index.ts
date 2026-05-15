@@ -40,6 +40,7 @@ async function main(): Promise<void> {
     lastCheckSuccess: false,
     checkCount: 0,
     errorCount: 0,
+    lastError: null,
   };
 
   if (config.statusPort > 0) {

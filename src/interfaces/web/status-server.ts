@@ -10,6 +10,7 @@ export interface BotStatus {
   lastCheckSuccess: boolean;
   checkCount: number;
   errorCount: number;
+  lastError: string | null;
 }
 
 function formatUptime(startedAt: Date): string {
@@ -31,6 +32,9 @@ function buildHtml(status: BotStatus, config: AppConfig, snapshot: StockSnapshot
   const uptime = formatUptime(status.startedAt);
   const lastCheck = formatDate(status.lastCheckAt);
   const startedAt = formatDate(status.startedAt);
+  const errorBanner = status.lastError
+    ? `<div class="error-banner">⚠️ <b>Error terakhir:</b> ${status.lastError}</div>`
+    : '';
 
   const locations =
     config.lmTargetLocations.length > 0 ? config.lmTargetLocations.join(', ') : 'Semua butik';
@@ -90,6 +94,8 @@ function buildHtml(status: BotStatus, config: AppConfig, snapshot: StockSnapshot
     .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
     .badge.available { background: #dcfce7; color: #15803d; }
     .badge.empty { background: #fee2e2; color: #b91c1c; }
+    .error-banner { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 8px;
+                    padding: 10px 14px; margin-bottom: 20px; font-size: 0.88rem; line-height:1.5; word-break:break-word; }
     .tag { display: inline-block; font-size: 0.78rem; background: #f1f5f9; color: #475569;
            padding: 2px 7px; border-radius: 5px; margin: 1px; }
     .none { color: #94a3b8; font-style: italic; }
@@ -100,6 +106,7 @@ function buildHtml(status: BotStatus, config: AppConfig, snapshot: StockSnapshot
 <body>
   <h1>🟡 Logam Mulia Stock Scheduler</h1>
   <p class="subtitle">Halaman ini auto-refresh setiap 30 detik</p>
+  ${errorBanner}
 
   <div class="cards">
     <div class="card">

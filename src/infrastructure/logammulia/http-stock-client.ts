@@ -18,6 +18,7 @@ import { logger } from '../../app/utils/logger';
 import { formatIsoWithJakarta } from '../../app/utils/time';
 import { sleep } from '../../app/utils/retry';
 import { createStockItem } from './parsers';
+import { readJson, writeJson } from '../../app/utils/file';
 
 const BASE_URL = 'https://www.logammulia.com';
 const STOCK_URL = `${BASE_URL}/id/purchase/gold`;
@@ -87,6 +88,57 @@ function createClient() {
  *       GET  /id/purchase/gold    → get stock HTML for that location
  *       Parse .ctr rows           → extract weight + availability
  */
+/**
+ * Hardcoded fallback location list.
+ * Used when /change-location returns 403 (e.g. datacenter IP blocked by Akamai WAF).
+ * Update this list if Logam Mulia adds / removes butik locations.
+ */
+const FALLBACK_LOCATIONS: LocationOption[] = [
+  { value: 'ABDH',  label: 'BELM - Pengiriman Ekspedisi, Pulogadung Jakarta, Jakarta' },
+  { value: 'AGDP',  label: 'BELM - Graha Dipta (Pengambilan Di Butik) Pulo Gadung, Jakarta' },
+  { value: 'AJK2',  label: 'BELM - Gedung Antam (pengambilan Di Butik), Jakarta' },
+  { value: 'AJK4',  label: 'BELM - Setiabudi One (pengambilan Di Butik), Jakarta' },
+  { value: 'JKT05', label: 'BELM - Juanda, Jakarta' },
+  { value: 'JKT06', label: 'BELM - Puri Indah, Jakarta' },
+  { value: 'ABDG',  label: 'BELM - Bandung, Bandung' },
+  { value: 'ASMG',  label: 'BELM - Semarang, Semarang' },
+  { value: 'AJOG',  label: 'BELM - Yogyakarta, Yogyakarta' },
+  { value: 'ASB1',  label: 'BELM - Surabaya Darmo, Surabaya' },
+  { value: 'ASB2',  label: 'BELM - Surabaya Pakuwon, Surabaya' },
+  { value: 'ADPS',  label: 'BELM - Denpasar Bali, Bali' },
+  { value: 'ABPN',  label: 'BELM - Balikpapan, Balikpapan' },
+  { value: 'AMKS',  label: 'BELM - Makassar, Makassar' },
+  { value: 'AKNO',  label: 'BELM - Medan, Medan' },
+  { value: 'APLG',  label: 'BELM - Palembang, Palembang' },
+  { value: 'APKU',  label: 'BELM - Pekanbaru, Pekanbaru' },
+  { value: 'ABSD',  label: 'BELM - Serpong (pengambilan Di Butik), Tangerang' },
+  { value: 'BTR01', label: 'BELM - Bintaro, Tangerang Selatan' },
+  { value: 'BGR01', label: 'BELM - Bogor, Bogor' },
+  { value: 'BKS01', label: 'BELM - Bekasi, Bekasi' },
+];
+
+const LOCATIONS_CACHE_FILE = 'data/locations-cache.json';
+
+/**
+ * Load cached location list from disk (saved after last successful fetch).
+ * Returns null if cache doesn't exist yet.
+ */
+async function loadCachedLocations(): Promise<LocationOption[] | null> {
+  return readJson<LocationOption[]>(LOCATIONS_CACHE_FILE);
+}
+
+/**
+ * Save freshly fetched location list to disk so it can be used as fallback.
+ */
+async function saveCachedLocations(locations: LocationOption[]): Promise<void> {
+  try {
+    await writeJson(LOCATIONS_CACHE_FILE, locations);
+    logger.debug(`[HTTP] Location cache saved (${locations.length} entries) → ${LOCATIONS_CACHE_FILE}`);
+  } catch (err) {
+    logger.warn('[HTTP] Failed to save location cache:', err);
+  }
+}
+
 /** Max parallel HTTP clients scraping locations simultaneously. */
 const SCRAPE_CONCURRENCY = 5;
 
@@ -153,15 +205,40 @@ export async function scrapeAllLocationsHttp(
       const label = $loc(el).text().trim();
       if (value) available.push({ value, label });
     });
-    logger.info(`[HTTP] ${available.length} location(s) found`);
+    if (available.length > 0) {
+      logger.info(`[HTTP] ${available.length} location(s) found from server`);
+      // Persist the fresh list — used as fallback on next 403
+      void saveCachedLocations(available);
+    } else {
+      logger.warn('[HTTP] Location list empty from server — using fallback list');
+      available = (await loadCachedLocations()) ?? FALLBACK_LOCATIONS;
+    }
   } catch (err) {
-    logger.error('[HTTP] Failed to fetch location list:', err);
-    return [];
-  }
-
-  if (available.length === 0) {
-    logger.error('[HTTP] Location list is empty — change-location selector may need updating');
-    return [];
+    const httpStatus = (err as { response?: { status?: number } }).response?.status;
+    const cached = await loadCachedLocations();
+    if (cached && cached.length > 0) {
+      if (httpStatus === 403) {
+        logger.warn(
+          `[HTTP] /change-location returned 403 (IP blocked by Akamai WAF) — using cached location list (${cached.length} locations, last saved to ${LOCATIONS_CACHE_FILE})`,
+        );
+      } else {
+        logger.warn(
+          `[HTTP] Failed to fetch location list (${httpStatus ?? 'network error'}) — using cached list (${cached.length} locations)`,
+        );
+      }
+      available = cached;
+    } else {
+      if (httpStatus === 403) {
+        logger.warn(
+          `[HTTP] /change-location returned 403 — no cache found, using hardcoded fallback (${FALLBACK_LOCATIONS.length} locations). Run once without 403 to build a fresh cache.`,
+        );
+      } else {
+        logger.warn(
+          `[HTTP] Failed to fetch location list (${httpStatus ?? 'network error'}) — no cache, using hardcoded fallback`,
+        );
+      }
+      available = FALLBACK_LOCATIONS;
+    }
   }
 
   // ── Step 3: Filter by target locations if configured ─────────────────────
