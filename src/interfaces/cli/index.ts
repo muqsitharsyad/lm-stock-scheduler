@@ -23,6 +23,10 @@ async function main(): Promise<void> {
     }`,
   );
   logger.info(`Interval  : ${config.checkIntervalSeconds}s`);
+  logger.info(
+    `Jam aktif : ${config.activeStart && config.activeEnd ? `${config.activeStart}–${config.activeEnd} WIB` : '24/7'}`,
+  );
+  logger.info(`Topics    : ${config.telegramUseTopics ? 'ENABLED (per-butik topics)' : 'DISABLED (single chat)'}`);
   logger.info(`Status    : http://localhost:${config.statusPort}`);
   logger.info(`Log level : ${config.logLevel}`);
 
@@ -49,7 +53,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  await runWithInterval(() => checkStock(config, status), config.checkIntervalSeconds);
+  await runWithInterval(() => checkStock(config, status), config);
 }
 
 main().catch((err) => {

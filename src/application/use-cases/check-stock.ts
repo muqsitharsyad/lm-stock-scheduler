@@ -1,5 +1,6 @@
 import { AppConfig } from '../../app/config/env';
 import { logger } from '../../app/utils/logger';
+import { sleep } from '../../app/utils/retry';
 import { scrapeAllLocationsHttp } from '../../infrastructure/logammulia/http-stock-client';
 import { loadSnapshot, saveSnapshot } from '../../infrastructure/persistence/snapshot-repository';
 import { loadTopics, saveTopics } from '../../infrastructure/persistence/topic-repository';
@@ -46,12 +47,16 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
           let messageThreadId: number | undefined;
 
           if (config.telegramUseTopics) {
-            // Reuse existing topic or create a new one for this butik
             if (topicMap[change.location] !== undefined) {
               messageThreadId = topicMap[change.location];
+              logger.debug(`[CheckStock] Reusing topic ${messageThreadId} for "${change.location}"`);
             } else {
+              // Delay between topic creations to avoid Telegram rate limits
+              if (Object.keys(topicMap).length > 0) await sleep(1_500);
               messageThreadId = await createForumTopic(change.location, config);
               topicMap[change.location] = messageThreadId;
+              // Save immediately so topic is not lost if a later error occurs
+              await saveTopics(config.topicsFile, topicMap);
             }
           }
 

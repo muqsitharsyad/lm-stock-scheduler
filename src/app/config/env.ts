@@ -35,6 +35,12 @@ export interface AppConfig {
   telegramUseTopics: boolean;
   /** Port for the built-in HTTP status page. 0 = disabled. */
   statusPort: number;
+  /**
+   * Operating hours in WIB (Asia/Jakarta). Format: "HH:MM".
+   * Outside these hours the scheduler sleeps. Empty = run 24/7.
+   */
+  activeStart: string;
+  activeEnd: string;
   checkIntervalSeconds: number;
   timezone: string;
   headless: boolean;
@@ -76,6 +82,9 @@ export function loadConfig(): AppConfig {
 
   const statusPort = parseInt(optionalEnv('STATUS_PORT', '3200'), 10);
 
+  const activeStart = optionalEnv('ACTIVE_START', '');
+  const activeEnd = optionalEnv('ACTIVE_END', '');
+
   const checkIntervalSeconds = parseInt(optionalEnv('CHECK_INTERVAL_SECONDS', '60'), 10);
   const timezone = optionalEnv('TZ', 'Asia/Jakarta');
   const headless = optionalEnv('HEADLESS', 'true').toLowerCase() !== 'false';
@@ -96,6 +105,8 @@ export function loadConfig(): AppConfig {
     telegramChatId,
     telegramUseTopics,
     statusPort,
+    activeStart,
+    activeEnd,
     checkIntervalSeconds,
     timezone,
     headless,
