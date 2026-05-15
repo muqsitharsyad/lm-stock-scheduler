@@ -10,6 +10,31 @@ import { sleep } from '../../app/utils/retry';
 const MAX_TOPIC_NAME_LENGTH = 128;
 
 /**
+ * Extracts a short, human-readable topic name from a full location label.
+ *
+ * Examples:
+ *   "BELM - Setiabudi One (pengambilan Di Butik), Jakarta" → "Setiabudi One (pengambilan Di Butik)"
+ *   "BELM - Surabaya Pakuwon, Surabaya"                   → "Surabaya Pakuwon"
+ *   "BELM - Pengiriman Ekspedisi, Pulogadung Jakarta, Jakarta" → "Pengiriman Ekspedisi, Pulogadung Jakarta"
+ */
+function toShortTopicName(locationName: string): string {
+  // 1. Strip prefix up to and including the first " - "
+  const dashIdx = locationName.indexOf(' - ');
+  let name = dashIdx !== -1 ? locationName.substring(dashIdx + 3) : locationName;
+
+  // 2. Strip last ", City" suffix (everything from the last comma)
+  const lastCommaIdx = name.lastIndexOf(',');
+  if (lastCommaIdx !== -1) {
+    name = name.substring(0, lastCommaIdx).trim();
+  }
+
+  // 3. Enforce Telegram's 128-character limit
+  return name.length > MAX_TOPIC_NAME_LENGTH
+    ? name.substring(0, MAX_TOPIC_NAME_LENGTH - 3) + '...'
+    : name;
+}
+
+/**
  * Sends a message to a Telegram chat (or a specific forum topic if messageThreadId is provided).
  * Handles 429 rate-limiting automatically using retry_after from response.
  */
@@ -80,10 +105,7 @@ export async function createForumTopic(
   const url = `https://api.telegram.org/bot${config.telegramBotToken}/createForumTopic`;
 
   // Telegram enforces max 128 characters for topic names
-  const name =
-    locationName.length > MAX_TOPIC_NAME_LENGTH
-      ? locationName.substring(0, MAX_TOPIC_NAME_LENGTH - 3) + '...'
-      : locationName;
+  const name = toShortTopicName(locationName);
 
   const MAX_ATTEMPTS = 3;
 

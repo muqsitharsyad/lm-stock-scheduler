@@ -180,5 +180,17 @@ export function startStatusServer(status: BotStatus, config: AppConfig): http.Se
     logger.info(`[StatusServer] Status page available at http://localhost:${config.statusPort}`);
   });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.warn(
+        `[StatusServer] Port ${config.statusPort} already in use — status page disabled. ` +
+          'Kill the previous process or change STATUS_PORT in .env.',
+      );
+      server.close();
+    } else {
+      logger.error('[StatusServer] Unexpected error:', err);
+    }
+  });
+
   return server;
 }
