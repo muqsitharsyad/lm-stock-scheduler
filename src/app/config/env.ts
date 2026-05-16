@@ -42,6 +42,8 @@ export interface AppConfig {
   activeStart: string;
   activeEnd: string;
   checkIntervalSeconds: number;
+  /** Number of locations scraped in parallel. Default 5. */
+  scrapeConcurrency: number;
   timezone: string;
   headless: boolean;
   logLevel: string;
@@ -86,6 +88,7 @@ export function loadConfig(): AppConfig {
   const activeEnd = optionalEnv('ACTIVE_END', '');
 
   const checkIntervalSeconds = parseInt(optionalEnv('CHECK_INTERVAL_SECONDS', '60'), 10);
+  const scrapeConcurrency = Math.max(1, parseInt(optionalEnv('SCRAPE_CONCURRENCY', '5'), 10));
   const timezone = optionalEnv('TZ', 'Asia/Jakarta');
   const headless = optionalEnv('HEADLESS', 'true').toLowerCase() !== 'false';
   const logLevel = optionalEnv('LOG_LEVEL', 'info');
@@ -108,6 +111,7 @@ export function loadConfig(): AppConfig {
     activeStart,
     activeEnd,
     checkIntervalSeconds,
+    scrapeConcurrency,
     timezone,
     headless,
     logLevel,

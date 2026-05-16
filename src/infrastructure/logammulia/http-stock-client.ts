@@ -89,11 +89,11 @@ function createClient() {
  *       Parse .ctr rows           → extract weight + availability
  */
 /**
- * Hardcoded fallback location list.
- * Used when /change-location returns 403 (e.g. datacenter IP blocked by Akamai WAF).
+ * Hardcoded fallback location list (exported for use by Playwright scraper too).
+ * Used when /change-location returns 403 or the popup fails to load.
  * Update this list if Logam Mulia adds / removes butik locations.
  */
-const FALLBACK_LOCATIONS: LocationOption[] = [
+export const FALLBACK_LOCATIONS: LocationOption[] = [
   { value: 'ABDH',  label: 'BELM - Pengiriman Ekspedisi, Pulogadung Jakarta, Jakarta' },
   { value: 'AGDP',  label: 'BELM - Graha Dipta (Pengambilan Di Butik) Pulo Gadung, Jakarta' },
   { value: 'AJK2',  label: 'BELM - Gedung Antam (pengambilan Di Butik), Jakarta' },
