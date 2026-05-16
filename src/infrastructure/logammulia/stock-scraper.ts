@@ -1,8 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { Browser, Page } from 'playwright';
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { Page } from 'playwright';
 import { LocationStock, StockItem } from '../../app/types/stock';
 import { AppConfig } from '../../app/config/env';
 import { logger } from '../../app/utils/logger';
@@ -10,41 +8,6 @@ import { withRetry, sleep } from '../../app/utils/retry';
 import { ensureDir } from '../../app/utils/file';
 import { formatIsoWithJakarta } from '../../app/utils/time';
 import { SELECTORS } from './selectors';
-
-chromium.use(StealthPlugin());
-
-// ---------------------------------------------------------------------------
-// Persistent browser singleton — reused across check intervals to eliminate
-// the 2-3s startup overhead and keep Akamai session cookies alive.
-// ---------------------------------------------------------------------------
-
-let _browser: Browser | null = null;
-
-async function getOrCreateBrowser(config: AppConfig): Promise<Browser> {
-  if (_browser && _browser.isConnected()) {
-    return _browser;
-  }
-  logger.info('[Browser] Launching Chromium (stealth)...');
-  _browser = await chromium.launch({
-    headless: config.headless,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
-  // Auto-clear reference when browser disconnects unexpectedly
-  _browser.on('disconnected', () => {
-    logger.warn('[Browser] Browser disconnected unexpectedly — will relaunch on next check');
-    _browser = null;
-  });
-  return _browser;
-}
-
-/** Call this on app shutdown to cleanly close the browser. */
-export async function closePersistentBrowser(): Promise<void> {
-  if (_browser) {
-    await _browser.close().catch(() => undefined);
-    _browser = null;
-    logger.info('[Browser] Persistent browser closed');
-  }
-}
 import { createStockItem } from './parsers';
 import { STOCK_URL } from './auth-client';
 
@@ -59,30 +22,6 @@ export interface LocationOption {
 }
 
 /**
- * Runs a full stock scrape using a persistent Playwright browser.
- * The browser stays alive between calls (no 2-3s launch overhead on subsequent runs).
- * A fresh page is opened per run and closed when done, keeping state clean.
- */
-export async function scrapeAllLocationsPlaywright(
-  config: AppConfig,
-  onResult?: (result: LocationStock) => void,
-): Promise<LocationStock[]> {
-  const browser = await getOrCreateBrowser(config);
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 900 },
-    locale: 'id-ID',
-  });
-  const page = await context.newPage();
-  try {
-    return await scrapeAllLocations(page, config, onResult);
-  } finally {
-    await context.close().catch(() => undefined);
-  }
-}
-
-/**
  * Scrapes stock data for all (or configured) butik locations.
  *
  * - If LM_TARGET_LOCATIONS is empty → scrapes every location found in the dropdown.
@@ -94,7 +33,6 @@ export async function scrapeAllLocationsPlaywright(
 export async function scrapeAllLocations(
   page: Page,
   config: AppConfig,
-  onResult?: (result: LocationStock) => void,
 ): Promise<LocationStock[]> {
   // Step 1: Navigate to the purchase/stock page
   await page.goto(STOCK_URL, { waitUntil: 'networkidle', timeout: 30_000 });
@@ -155,7 +93,6 @@ export async function scrapeAllLocations(
         `scrape "${loc.label}"`,
       );
       results.push(locationStock);
-      onResult?.(locationStock);
       logger.info(`[Scraper] "${loc.label}" → ${locationStock.items.length} item(s)`);
     } catch (err) {
       logger.error(`[Scraper] Failed to scrape "${loc.label}":`, err);
@@ -163,7 +100,6 @@ export async function scrapeAllLocations(
         await saveDebugSnapshot(page, config, `scrape-error-${slugify(loc.value)}`);
       }
       results.push({ location: loc.label, items: [], scrapedAt: formatIsoWithJakarta() });
-      onResult?.({ location: loc.label, items: [], scrapedAt: formatIsoWithJakarta() });
     }
   }
 
