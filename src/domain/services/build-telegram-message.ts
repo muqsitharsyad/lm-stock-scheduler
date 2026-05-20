@@ -45,7 +45,10 @@ function buildAvailableMessage(change: LocationStockChange, time: string): strin
   const availableItems = change.allItems.filter(({ available }) => available);
 
   const gramasiLines = availableItems
-    .map(({ weight }) => `- ${weight}`)
+    .map(({ weight, qty }) => {
+      const qtyStr = qty && qty > 1 ? ` (${qty} pcs)` : '';
+      return `- ${weight}${qtyStr}`;
+    })
     .join('\n');
 
   const lines = [
@@ -65,13 +68,19 @@ function buildAvailableMessage(change: LocationStockChange, time: string): strin
 
 function buildUnavailableMessage(
   change: LocationStockChange,
-  decreases: { weight: string }[],
+  decreases: { weight: string; oldQty?: number; newQty?: number }[],
   time: string,
 ): string {
-  const soldOutWeights = decreases.map(({ weight }) => weight);
-
-  const gramasiLines = soldOutWeights
-    .map((w) => `- ${w} (habis)`)
+  const gramasiLines = decreases
+    .map((d) => {
+      if (d.newQty === 0) {
+        const fromStr = d.oldQty && d.oldQty > 1 ? ` (dari ${d.oldQty} pcs → habis)` : ' (habis)';
+        return `- ${d.weight}${fromStr}`;
+      }
+      // Decrease but not sold out
+      const qtyStr = d.newQty && d.newQty > 0 ? ` (sisa ${d.newQty} pcs)` : '';
+      return `- ${d.weight}${qtyStr}`;
+    })
     .join('\n');
 
   const lines = [

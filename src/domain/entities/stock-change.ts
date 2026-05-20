@@ -10,6 +10,7 @@ export interface StockChangeItem {
 export interface StockItemSummary {
   weight: string;
   available: boolean;
+  qty?: number;
 }
 
 export interface LocationStockChange {

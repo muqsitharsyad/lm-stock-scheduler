@@ -425,8 +425,13 @@ function parseStockHtml(
     if (targetWeights.length > 0 && !matchesTargetWeight(rawWeight, targetWeights)) return;
 
     const soldOut = isDisabled || hasSoldOut;
+
+    // Extract actual stock qty from input.qty max attribute (if available)
+    const qtyInput = $row.find('input.qty');
+    const maxQty = soldOut ? 0 : parseInt(qtyInput.attr('max') || '1', 10);
+
     items.push(
-      createStockItem(rawWeight, soldOut ? 0 : 1, soldOut ? 'belum tersedia' : undefined),
+      createStockItem(rawWeight, maxQty, soldOut ? 'belum tersedia' : undefined),
     );
   });
 

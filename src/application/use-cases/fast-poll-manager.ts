@@ -162,6 +162,114 @@ export function stopAllFastPolls(): void {
   }
 }
 
+/** Returns current WIB minutes from midnight. */
+function nowWibMinutes(): number {
+  const wib = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+  return wib.getHours() * 60 + wib.getMinutes();
+}
+
+/**
+ * Starts a SCHEDULED fast poll for `locationCode` that runs continuously
+ * during active hours (default 06:50-17:00 WIB).
+ *
+ * Dual-speed:
+ *  - Normal: 4s ± 1s (range 3-5s) — monitoring, waiting for stock
+ *  - Turbo: 1.5s ± 0.3s — active stock detected, real-time qty tracking
+ *
+ * Switches to turbo when stock appears, back to normal when stock gone.
+ * Auto-pauses for 5 minutes if Akamai returns 403/429 (rate limit).
+ */
+export function startScheduledFastPoll(
+  config: AppConfig,
+  locationCode: string,
+  locationLabel: string,
+  onResult: (result: LocationStock) => void,
+  startHour = 6,
+  startMinute = 50,
+  endHour = 17,
+  endMinute = 0,
+): () => void {
+  let aborted = false;
+  let pausedUntil = 0;
+  let turboMode = false;
+
+  const startMin = startHour * 60 + startMinute;
+  const endMin = endHour * 60 + endMinute;
+  const normalIntervalMs = config.fastPollIntervalMs ?? 4000;
+  const turboIntervalMs = 1500;
+
+  logger.info(
+    `[ScheduledFastPoll] ▶ Active hours ${startHour}:${String(startMinute).padStart(2, '0')}-${endHour}:${String(endMinute).padStart(2, '0')} WIB | Normal: ${normalIntervalMs}ms | Turbo: ${turboIntervalMs}ms for "${locationLabel}"`,
+  );
+
+  void (async () => {
+    while (!aborted) {
+      const now = Date.now();
+
+      // Honor pause-on-block cooldown
+      if (now < pausedUntil) {
+        await sleep(Math.min(30_000, pausedUntil - now));
+        continue;
+      }
+
+      // Only poll during active hours
+      const mins = nowWibMinutes();
+      if (mins < startMin || mins >= endMin) {
+        if (turboMode) {
+          turboMode = false;
+          logger.info(`[ScheduledFastPoll] Outside active hours — turbo off`);
+        }
+        await sleep(60_000);
+        continue;
+      }
+
+      const start = Date.now();
+      try {
+        const result = await scrapeSingleLocationFast(
+          locationCode,
+          locationLabel,
+          config.fastPollWeights,
+        );
+
+        const hasTargetStock = result.items.some(
+          (i) => i.qty > 0 && config.fastPollWeights.some((w) => Math.abs(w - parseWeight(i.weight)) < 0.001),
+        );
+
+        // Switch speed based on stock presence
+        if (hasTargetStock && !turboMode) {
+          turboMode = true;
+          logger.info(`[ScheduledFastPoll] ⚡ Stock detected — switching to turbo (${turboIntervalMs}ms)`);
+        } else if (!hasTargetStock && turboMode) {
+          turboMode = false;
+          logger.info(`[ScheduledFastPoll] Stock gone — back to normal (${normalIntervalMs}ms)`);
+        }
+
+        onResult(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("403") || msg.includes("429") || msg.toLowerCase().includes("access denied")) {
+          pausedUntil = Date.now() + 5 * 60 * 1000;
+          logger.warn(`[ScheduledFastPoll] Rate limited (${msg}) — pausing 5 minutes`);
+        } else {
+          logger.warn(`[ScheduledFastPoll] Iteration error for "${locationLabel}":`, err);
+        }
+      }
+
+      // Jitter based on mode
+      const baseInterval = turboMode ? turboIntervalMs : normalIntervalMs;
+      const jitterRange = turboMode ? 600 : 2000; // ±300ms turbo, ±1000ms normal
+      const jitter = (Math.random() * jitterRange) - (jitterRange / 2);
+      const waitMs = Math.max(500, baseInterval + jitter - (Date.now() - start));
+      if (waitMs > 0) await sleep(waitMs);
+    }
+    logger.info(`[ScheduledFastPoll] ⏹ Stopped for "${locationLabel}"`);
+  })();
+
+  return () => {
+    aborted = true;
+  };
+}
+
 function parseWeight(raw: string): number {
   const m = raw.match(/(\d+[,.]?\d*)/);
   return m ? parseFloat(m[1].replace(',', '.')) : 0;

@@ -118,7 +118,7 @@ export function loadConfig(): AppConfig {
   const witAiToken = process.env['WIT_AI_ACCESS_TOKEN'] || undefined;
   const checkoutWebhookUrl = process.env['CHECKOUT_WEBHOOK_URL'] || undefined;
 
-  const fastPollIntervalMs = parseInt(optionalEnv('FAST_POLL_INTERVAL_MS', '1750'), 10);
+  const fastPollIntervalMs = parseInt(optionalEnv('FAST_POLL_INTERVAL_MS', '4000'), 10);
   const fastPollLocationsRaw = optionalEnv('FAST_POLL_LOCATIONS', 'ABDH');
   const fastPollLocations = fastPollLocationsRaw
     .split(',')

@@ -63,6 +63,7 @@ export function compareSnapshots(
       const allItems = newLocation.items.map((i) => ({
         weight: i.weight,
         available: i.qty > 0,
+        qty: i.qty,
       }));
       changes.push({
         location: newLocation.location,
