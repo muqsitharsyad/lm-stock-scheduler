@@ -11,6 +11,8 @@ export interface BotStatus {
   checkCount: number;
   errorCount: number;
   lastError: string | null;
+  /** Recent errors with timestamps (capped at 10 most recent). */
+  errorHistory?: { at: Date; message: string }[];
 }
 
 function formatUptime(startedAt: Date): string {
@@ -28,12 +30,34 @@ function formatDate(d: Date | null): string {
   return d.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function buildHtml(status: BotStatus, config: AppConfig, snapshot: StockSnapshot | null): string {
   const uptime = formatUptime(status.startedAt);
   const lastCheck = formatDate(status.lastCheckAt);
   const startedAt = formatDate(status.startedAt);
   const errorBanner = status.lastError
-    ? `<div class="error-banner">⚠️ <b>Error terakhir:</b> ${status.lastError}</div>`
+    ? `<div class="error-banner">⚠️ <b>Error terakhir:</b> ${escapeHtml(status.lastError)}</div>`
+    : '';
+
+  // Build error history table
+  let errorHistoryRows = '';
+  if (status.errorHistory && status.errorHistory.length > 0) {
+    for (const e of [...status.errorHistory].reverse()) {
+      errorHistoryRows += `<tr>
+        <td style="white-space:nowrap;font-size:.78rem;color:#64748b">${formatDate(e.at)}</td>
+        <td style="font-family:ui-monospace,monospace;font-size:.8rem;color:#991b1b;word-break:break-all">${escapeHtml(e.message)}</td>
+      </tr>`;
+    }
+  }
+  const errorHistorySection = errorHistoryRows
+    ? `<br><h2>🚨 Riwayat Error (10 terakhir)</h2>
+      <table>
+        <thead><tr><th style="width:160px">Waktu</th><th>Pesan Error</th></tr></thead>
+        <tbody>${errorHistoryRows}</tbody>
+      </table>`
     : '';
 
   const locations =
@@ -148,6 +172,7 @@ function buildHtml(status: BotStatus, config: AppConfig, snapshot: StockSnapshot
     </thead>
     <tbody>${stockRows}</tbody>
   </table>
+  ${errorHistorySection}
 
   <p class="refresh">⏱ Data snapshot dari: ${snapshot?.[0]?.scrapedAt ? formatDate(new Date(snapshot[0].scrapedAt)) : '-'}</p>
 </body>

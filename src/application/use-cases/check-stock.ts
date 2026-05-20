@@ -172,6 +172,9 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
       status.errorCount++;
       const msg = 'Scraping returned 0 results (tidak ada lokasi yang ter-scrape)';
       status.lastError = msg;
+      if (!status.errorHistory) status.errorHistory = [];
+      status.errorHistory.push({ at: new Date(), message: msg });
+      if (status.errorHistory.length > 10) status.errorHistory.shift();
       logger.error(`[CheckStock] ${msg}`);
       return;
     }
@@ -194,6 +197,10 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     status.errorCount++;
     const errMsg = err instanceof Error ? err.message : String(err);
     status.lastError = errMsg;
+    // Append to error history (keep last 10)
+    if (!status.errorHistory) status.errorHistory = [];
+    status.errorHistory.push({ at: new Date(), message: errMsg });
+    if (status.errorHistory.length > 10) status.errorHistory.shift();
     logger.error('[CheckStock] Unhandled error during stock check:', err);
     throw err;
   }
