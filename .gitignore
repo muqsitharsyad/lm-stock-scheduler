@@ -3,5 +3,6 @@ dist/
 .env
 data/session.json
 data/last-stock.json
+data/locations-cache.json
 data/debug/
 *.js.map
