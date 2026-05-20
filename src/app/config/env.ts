@@ -33,6 +33,11 @@ export interface AppConfig {
    * Topic IDs are persisted in topicsFile.
    */
   telegramUseTopics: boolean;
+  /**
+   * When true, send notifications when stock decreases or becomes sold out.
+   * Default: true (matches competitor behavior — notify on all changes).
+   */
+  notifyDecrease: boolean;
   /** Port for the built-in HTTP status page. 0 = disabled. */
   statusPort: number;
   /**
@@ -50,6 +55,18 @@ export interface AppConfig {
   debugScreenshotOnError: boolean;
   /** Wit.ai Server Access Token for automated reCAPTCHA audio bypass. Optional. */
   witAiToken: string | undefined;
+  /** URL to POST when stock becomes available (triggers auto-checkout). */
+  checkoutWebhookUrl: string | undefined;
+  /** Fast poll interval in ms for priority locations (default 1750). */
+  fastPollIntervalMs: number;
+  /** Location codes that get fast polling when stock appears (e.g. ["ABDH"]). */
+  fastPollLocations: string[];
+  /** Gramasi that trigger fast polling (e.g. [0.5, 1, 2, 3, 5]). */
+  fastPollWeights: number[];
+  /** Stop fast poll after this many seconds without stock (default 300). */
+  fastPollTimeoutSeconds: number;
+  /** Min seconds between webhook fires for same location+weight (default 15). */
+  webhookCooldownSeconds: number;
   dataDir: string;
   sessionFile: string;
   snapshotFile: string;
@@ -82,13 +99,16 @@ export function loadConfig(): AppConfig {
   const telegramUseTopics =
     optionalEnv('TELEGRAM_USE_TOPICS', 'false').toLowerCase() === 'true';
 
+  const notifyDecrease =
+    optionalEnv('NOTIFY_DECREASE', 'true').toLowerCase() !== 'false';
+
   const statusPort = parseInt(optionalEnv('STATUS_PORT', '3200'), 10);
 
   const activeStart = optionalEnv('ACTIVE_START', '');
   const activeEnd = optionalEnv('ACTIVE_END', '');
 
-  const checkIntervalSeconds = parseInt(optionalEnv('CHECK_INTERVAL_SECONDS', '60'), 10);
-  const scrapeConcurrency = Math.max(1, parseInt(optionalEnv('SCRAPE_CONCURRENCY', '5'), 10));
+  const checkIntervalSeconds = parseInt(optionalEnv('CHECK_INTERVAL_SECONDS', '15'), 10);
+  const scrapeConcurrency = Math.max(1, parseInt(optionalEnv('SCRAPE_CONCURRENCY', '10'), 10));
   const timezone = optionalEnv('TZ', 'Asia/Jakarta');
   const headless = optionalEnv('HEADLESS', 'true').toLowerCase() !== 'false';
   const logLevel = optionalEnv('LOG_LEVEL', 'info');
@@ -96,6 +116,21 @@ export function loadConfig(): AppConfig {
     optionalEnv('DEBUG_SCREENSHOT_ON_ERROR', 'true').toLowerCase() !== 'false';
 
   const witAiToken = process.env['WIT_AI_ACCESS_TOKEN'] || undefined;
+  const checkoutWebhookUrl = process.env['CHECKOUT_WEBHOOK_URL'] || undefined;
+
+  const fastPollIntervalMs = parseInt(optionalEnv('FAST_POLL_INTERVAL_MS', '1750'), 10);
+  const fastPollLocationsRaw = optionalEnv('FAST_POLL_LOCATIONS', 'ABDH');
+  const fastPollLocations = fastPollLocationsRaw
+    .split(',')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const fastPollWeightsRaw = optionalEnv('FAST_POLL_WEIGHTS', '0.5,1,2,3,5');
+  const fastPollWeights = fastPollWeightsRaw
+    .split(',')
+    .map((w) => parseFloat(w.trim().replace(',', '.')))
+    .filter((w) => !isNaN(w) && w > 0);
+  const fastPollTimeoutSeconds = parseInt(optionalEnv('FAST_POLL_TIMEOUT_SECONDS', '300'), 10);
+  const webhookCooldownSeconds = parseInt(optionalEnv('WEBHOOK_COOLDOWN_SECONDS', '15'), 10);
 
   const dataDir = 'data';
 
@@ -107,6 +142,7 @@ export function loadConfig(): AppConfig {
     telegramBotToken,
     telegramChatId,
     telegramUseTopics,
+    notifyDecrease,
     statusPort,
     activeStart,
     activeEnd,
@@ -117,6 +153,12 @@ export function loadConfig(): AppConfig {
     logLevel,
     debugScreenshotOnError,
     witAiToken,
+    checkoutWebhookUrl,
+    fastPollIntervalMs,
+    fastPollLocations,
+    fastPollWeights,
+    fastPollTimeoutSeconds,
+    webhookCooldownSeconds,
     dataDir,
     sessionFile: `${dataDir}/session.json`,
     snapshotFile: `${dataDir}/last-stock.json`,

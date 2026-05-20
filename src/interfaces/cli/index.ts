@@ -27,6 +27,7 @@ async function main(): Promise<void> {
     `Jam aktif : ${config.activeStart && config.activeEnd ? `${config.activeStart}–${config.activeEnd} WIB` : '24/7'}`,
   );
   logger.info(`Topics    : ${config.telegramUseTopics ? 'ENABLED (per-butik topics)' : 'DISABLED (single chat)'}`);
+  logger.info(`Notify    : stock naik${config.notifyDecrease ? ' + turun/habis' : ' saja'}`);
   logger.info(`Status    : http://localhost:${config.statusPort}`);
   logger.info(`Log level : ${config.logLevel}`);
 

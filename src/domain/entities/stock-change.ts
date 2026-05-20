@@ -1,7 +1,10 @@
+export type ChangeType = 'increase' | 'decrease' | 'soldout';
+
 export interface StockChangeItem {
   weight: string;
   oldQty: number;
   newQty: number;
+  type: ChangeType;
 }
 
 export interface StockItemSummary {
@@ -11,7 +14,7 @@ export interface StockItemSummary {
 
 export interface LocationStockChange {
   location: string;
-  /** Gramasi items that newly became available (qty 0 → 1). */
+  /** Gramasi items that changed (increase, decrease, or soldout). */
   changes: StockChangeItem[];
   /** ALL gramasi for this location with their current availability status. */
   allItems: StockItemSummary[];
@@ -19,9 +22,17 @@ export interface LocationStockChange {
 }
 
 export function hasIncrease(change: StockChangeItem): boolean {
-  return change.newQty > change.oldQty;
+  return change.type === 'increase';
+}
+
+export function hasDecrease(change: StockChangeItem): boolean {
+  return change.type === 'decrease' || change.type === 'soldout';
 }
 
 export function filterIncreases(changes: StockChangeItem[]): StockChangeItem[] {
   return changes.filter(hasIncrease);
+}
+
+export function filterDecreases(changes: StockChangeItem[]): StockChangeItem[] {
+  return changes.filter(hasDecrease);
 }

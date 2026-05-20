@@ -5,7 +5,8 @@ export interface StockItem {
 }
 
 export interface LocationStock {
-  location: string;  // e.g. "BELM Pulogadung Ekspedisi"
+  location: string;        // human-readable label, e.g. "BELM Pulogadung Ekspedisi"
+  locationCode?: string;   // internal code used by /do-change-location, e.g. "ABDH"
   items: StockItem[];
   scrapedAt: string; // ISO 8601 with Jakarta offset, e.g. "2026-05-14T12:02:24+07:00"
 }

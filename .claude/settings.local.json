@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(npx ts-node *)",
+      "Bash(python -c \"import json, sys; data=json.load\\(sys.stdin\\); cookies=data.get\\('cookies',[]\\); print\\(f'Total cookies: {len\\(cookies\\)}'\\); [print\\(f\\\\\"  {c['name']}: domain={c.get\\('domain'\\)}, expires={c.get\\('expires'\\)}\\\\\"\\) for c in cookies if c['name'] in ['ci_session', 'PHPSESSID', 'logam_mulia', 'XSRF-TOKEN']]\")",
+      "Bash(python -c ' *)",
+      "Read(//tmp/**)",
+      "Read(//c/Users/kinmin/AppData/Local/Temp/**)",
+      "Bash(node -e ' *)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/login.log)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/full-flow.log)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 14148 //F)",
+      "Bash(curl -s -X POST http://localhost:3300/checkout -H \"Content-Type: application/json\" -d '{\"location\":\"BELM - Pengiriman Ekspedisi, Pulogadung Jakarta, Jakarta\",\"locationCode\":\"ABDH\",\"items\":[{\"weight\":\"10 gr\",\"qty\":1}]}')",
+      "Bash(xargs grep -l \"performCheckoutFast\\\\|Extracting VA from order history\")",
+      "Bash(taskkill //PID 30776 //F)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/full-flow2.log)",
+      "Bash(curl -s http://localhost:3300/health)",
+      "Bash(curl -s http://localhost:3300/status)",
+      "Bash(taskkill //PID 25396 //F)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/full-flow3.log)",
+      "Bash(taskkill //PID 13304 //F)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/login2.log)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/full-flow4.log)",
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(ffmpeg -version)",
+      "Bash(pip install *)",
+      "Bash(taskkill //PID 8336 //F)",
+      "Bash(tee C:/Users/kinmin/AppData/Local/Temp/full-flow-final.log)",
+      "Bash(taskkill //PID 21812 //F)",
+      "Bash(taskkill //PID 32760 //F)",
+      "Bash(taskkill //PID 31588 //F)",
+      "Bash(taskkill //PID 14020 //F)",
+      "Bash(taskkill //PID 28920 //F)",
+      "Bash(taskkill //PID 25344 //F)",
+      "Bash(taskkill //PID 10312 //F)"
+    ]
+  }
+}

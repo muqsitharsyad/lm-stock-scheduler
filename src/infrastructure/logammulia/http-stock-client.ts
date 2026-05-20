@@ -5,7 +5,8 @@
  * Stock data is server-rendered HTML: we use axios + tough-cookie for session
  * management and cheerio for HTML parsing.
  *
- * Speed: ~200-500ms per location vs ~10-30s with Playwright.
+ * Speed: ~2-5s for ALL 21 locations (parallel) vs ~10-15s sequential.
+ * Each location gets its own HTTP session to avoid cookie conflicts.
  */
 
 import axios from 'axios';
@@ -16,7 +17,6 @@ import { LocationStock, StockItem } from '../../app/types/stock';
 import { AppConfig } from '../../app/config/env';
 import { logger } from '../../app/utils/logger';
 import { formatIsoWithJakarta } from '../../app/utils/time';
-import { sleep } from '../../app/utils/retry';
 import { createStockItem } from './parsers';
 import { readJson, writeJson } from '../../app/utils/file';
 
@@ -75,6 +75,93 @@ function createClient() {
       headers: REQUEST_HEADERS,
     }),
   );
+}
+
+/**
+ * Persistent client for fast-polling a single location.
+ * Loads cookies from session file (if available) to inherit Akamai _abck cookies,
+ * reducing chance of WAF block during aggressive polling.
+ */
+let _fastClient: ReturnType<typeof createClient> | null = null;
+let _fastClientLocation: string | null = null;
+
+/**
+ * Creates a client pre-loaded with cookies from session.json (if exists).
+ * This gives the HTTP client Akamai sensor cookies from a real browser session.
+ */
+async function createClientWithSession(): Promise<ReturnType<typeof createClient>> {
+  const client = createClient();
+  try {
+    const sessionPath = 'data/session.json';
+    const raw = await import('fs/promises').then(fs => fs.readFile(sessionPath, 'utf-8'));
+    const sessionData = JSON.parse(raw);
+    const jar = (client.defaults as any).jar as CookieJar;
+    for (const c of sessionData.cookies || []) {
+      try {
+        const cleanDomain = (c.domain || '').replace(/^\./, '');
+        const cookieStr = `${c.name}=${c.value}; Domain=${cleanDomain}; Path=${c.path || '/'}`;
+        jar.setCookieSync(cookieStr, `https://${cleanDomain}${c.path || '/'}`);
+      } catch { /* skip */ }
+    }
+  } catch {
+    // No session file or parse error — use fresh client
+  }
+  return client;
+}
+
+/**
+ * Scrapes a single location at high frequency, reusing a cached session client.
+ * Used by the adaptive fast-poll loop. Falls back to fresh session on errors.
+ */
+export async function scrapeSingleLocationFast(
+  locationCode: string,
+  locationLabel: string,
+  targetWeights: number[],
+): Promise<LocationStock> {
+  // (Re)init persistent client if needed (location change or first call)
+  if (!_fastClient || _fastClientLocation !== locationCode) {
+    _fastClient = await createClientWithSession();
+    _fastClientLocation = locationCode;
+    try {
+      const initResp = await _fastClient.get<string>(STOCK_URL);
+      const $init = cheerio.load(initResp.data);
+      const csrf = $init('meta[name="_token"]').attr('content') ?? null;
+      if (csrf) {
+        await _fastClient.post(
+          CHANGE_LOCATION_URL,
+          new URLSearchParams({ _token: csrf, location: locationCode }).toString(),
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+        );
+      }
+    } catch (err) {
+      logger.warn(`[FastPoll] Init failed for "${locationLabel}":`, err);
+      _fastClient = null;
+      _fastClientLocation = null;
+      throw err;
+    }
+  }
+
+  try {
+    const stockResp = await _fastClient.get<string>(STOCK_URL);
+    const items = parseStockHtml(stockResp.data, locationLabel, targetWeights);
+    return {
+      location: locationLabel,
+      locationCode,
+      items,
+      scrapedAt: formatIsoWithJakarta(),
+    };
+  } catch (err) {
+    // On error, invalidate client so next call rebuilds session
+    _fastClient = null;
+    _fastClientLocation = null;
+    logger.warn(`[FastPoll] Scrape failed for "${locationLabel}":`, err);
+    return {
+      location: locationLabel,
+      locationCode,
+      items: [],
+      scrapedAt: formatIsoWithJakarta(),
+    };
+  }
 }
 
 /**
@@ -228,50 +315,74 @@ export async function scrapeAllLocationsHttp(
     }
   }
 
-  // ── Step 4: Sequential scraping using the shared session ─────────────────
-  // One client, one session — no parallel fresh clients that trigger Akamai WAF.
-  logger.info(`[HTTP] Scraping ${targets.length} location(s) sequentially (shared session)`);
+  // ── Step 4: Parallel scraping — each location gets its own session ────────
+  // Parallel independent sessions avoid the sequential bottleneck.
+  // Each location creates its own client+session to avoid cookie conflicts.
+  const concurrency = config.scrapeConcurrency;
+  logger.info(`[HTTP] Scraping ${targets.length} location(s) in parallel (concurrency=${concurrency})`);
 
   const results: LocationStock[] = [];
 
-  for (const loc of targets) {
-    logger.debug(`[HTTP] ── ${loc.label} (${loc.value})`);
-    try {
-      // Switch server-side session to this location
-      if (csrfToken) {
-        await client.post(
-          CHANGE_LOCATION_URL,
-          new URLSearchParams({ _token: csrfToken, location: loc.value }).toString(),
-          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
-        );
-      } else {
-        logger.warn(`[HTTP] No CSRF token — location switch may not work for "${loc.label}"`);
-      }
-
-      // Small delay to appear human-like and avoid rate-limit triggers
-      await sleep(300);
-
-      // Fetch stock page for this location; also refresh CSRF for next iteration
-      const stockResp = await client.get<string>(STOCK_URL);
-      const $stock = cheerio.load(stockResp.data);
-      const newCsrf = $stock('meta[name="_token"]').attr('content');
-      if (newCsrf) csrfToken = newCsrf;
-
-      const items = parseStockHtml(stockResp.data, loc.label, config.lmTargetWeights);
-      logger.info(`[HTTP] "${loc.label}" → ${items.length} item(s)`);
-
-      const result: LocationStock = { location: loc.label, items, scrapedAt: formatIsoWithJakarta() };
-      results.push(result);
-      onResult?.(result);
-    } catch (err) {
-      logger.error(`[HTTP] Failed to scrape "${loc.label}":`, err);
-      const failed: LocationStock = { location: loc.label, items: [], scrapedAt: formatIsoWithJakarta() };
-      results.push(failed);
-      onResult?.(failed);
-    }
+  for (let i = 0; i < targets.length; i += concurrency) {
+    const batch = targets.slice(i, i + concurrency);
+    const batchResults = await Promise.all(
+      batch.map((loc) => scrapeLocationWithOwnSession(loc, config, onResult)),
+    );
+    results.push(...batchResults);
   }
 
   return results;
+}
+
+/**
+ * Scrapes a single location using its own independent HTTP session.
+ * This allows full parallelism without cookie/session conflicts.
+ */
+async function scrapeLocationWithOwnSession(
+  loc: LocationOption,
+  config: AppConfig,
+  onResult?: (result: LocationStock) => void,
+): Promise<LocationStock> {
+  const client = createClient();
+  try {
+    // Step A: Init session + get CSRF
+    const initResp = await client.get<string>(STOCK_URL);
+    const $init = cheerio.load(initResp.data);
+    const csrfToken = $init('meta[name="_token"]').attr('content') ?? null;
+
+    // Step B: Switch location
+    if (csrfToken) {
+      await client.post(
+        CHANGE_LOCATION_URL,
+        new URLSearchParams({ _token: csrfToken, location: loc.value }).toString(),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+      );
+    }
+
+    // Step C: Fetch stock page for this location (no delay — speed is priority)
+    const stockResp = await client.get<string>(STOCK_URL);
+    const items = parseStockHtml(stockResp.data, loc.label, config.lmTargetWeights);
+    logger.info(`[HTTP] "${loc.label}" → ${items.length} item(s)`);
+
+    const result: LocationStock = {
+      location: loc.label,
+      locationCode: loc.value,
+      items,
+      scrapedAt: formatIsoWithJakarta(),
+    };
+    onResult?.(result);
+    return result;
+  } catch (err) {
+    logger.error(`[HTTP] Failed to scrape "${loc.label}":`, err);
+    const failed: LocationStock = {
+      location: loc.label,
+      locationCode: loc.value,
+      items: [],
+      scrapedAt: formatIsoWithJakarta(),
+    };
+    onResult?.(failed);
+    return failed;
+  }
 }
 
 /**

@@ -9,6 +9,11 @@ import { compareSnapshots } from '../../domain/services/compare-stock';
 import { buildTelegramMessage } from '../../domain/services/build-telegram-message';
 import { sendTelegramMessage, createForumTopic } from '../../infrastructure/telegram/telegram-client';
 import { BotStatus } from '../../interfaces/web/status-server';
+import {
+  startFastPoll,
+  isFastPollActive,
+  shouldFireWebhook,
+} from './fast-poll-manager';
 
 /**
  * Main orchestration use-case.
@@ -72,12 +77,71 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     const notificationPromises: Promise<void>[] = [];
     const allResults: LocationStock[] = [];
 
+    /**
+     * Lightweight handler used by the fast-poll loop. Only fires the webhook;
+     * skips Telegram (avoids spam every 1.75s) and snapshot diff machinery.
+     */
+    const onFastPollResult = (result: LocationStock): void => {
+      if (!config.checkoutWebhookUrl) return;
+      const locCode = result.locationCode || result.location;
+      const webhookItems = result.items.filter((i) => {
+        if (i.qty <= 0) return false;
+        return shouldFireWebhook(
+          locCode,
+          i.weight,
+          i.qty,
+          config.webhookCooldownSeconds,
+        );
+      });
+      if (webhookItems.length > 0) {
+        triggerCheckoutWebhook(config.checkoutWebhookUrl, result, webhookItems);
+      }
+    };
+
     const onResult = (result: LocationStock): void => {
       allResults.push(result);
       const p = (async () => {
-        const changes = compareSnapshots(oldSnapshot, [result]);
+        // Compare with notifyDecrease option from config
+        const changes = compareSnapshots(oldSnapshot, [result], {
+          notifyDecrease: config.notifyDecrease,
+        });
         if (changes.length === 0) return;
         const change = changes[0];
+
+        // Trigger auto-checkout webhook on stock increase, gated by per-(loc|weight) cooldown
+        if (config.checkoutWebhookUrl) {
+          const webhookItems = result.items.filter((i) => {
+            if (i.qty <= 0) return false;
+            return shouldFireWebhook(
+              result.locationCode || result.location,
+              i.weight,
+              i.qty,
+              config.webhookCooldownSeconds,
+            );
+          });
+          if (webhookItems.length > 0) {
+            triggerCheckoutWebhook(config.checkoutWebhookUrl, result, webhookItems);
+          }
+        }
+
+        // Adaptive fast poll: if ABDH (or any priority location) just got target-weight stock,
+        // switch to fast polling so subsequent restocks are caught within ~2s.
+        // Fast-poll uses onFastPollResult (webhook-only, no Telegram spam).
+        const locCode = result.locationCode || '';
+        const isPriorityLocation = config.fastPollLocations.some(
+          (l) => locCode === l || result.location.includes(l),
+        );
+        if (isPriorityLocation && !isFastPollActive(locCode)) {
+          const hasTargetWeightStock = result.items.some((i) => {
+            if (i.qty <= 0) return false;
+            const w = parseFloat(i.weight.match(/(\d+[,.]?\d*)/)?.[1].replace(',', '.') || '0');
+            return config.fastPollWeights.some((tw) => Math.abs(tw - w) < 0.001);
+          });
+          if (hasTargetWeightStock) {
+            startFastPoll(config, locCode, result.location, onFastPollResult);
+          }
+        }
+
         try {
           const threadId = await getOrCreateTopic(change.location);
           logger.info(
@@ -101,8 +165,7 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     // Wait for all in-flight notifications before persisting snapshot
     await Promise.allSettled(notificationPromises);
 
-    // Safety net: if no results came back (shouldn't happen after init-session now throws),
-    // treat as failure so we don't overwrite last good snapshot
+    // Safety net: if no results came back, treat as failure
     if (allResults.length === 0) {
       status.lastCheckAt = new Date();
       status.lastCheckSuccess = false;
@@ -116,7 +179,7 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     // Log summary
     const increased = notificationPromises.length;
     if (increased === 0) {
-      logger.info('[CheckStock] No stock increases detected');
+      logger.info('[CheckStock] No stock changes detected');
     }
 
     await saveSnapshot(config.snapshotFile, allResults);
@@ -134,4 +197,55 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     logger.error('[CheckStock] Unhandled error during stock check:', err);
     throw err;
   }
+}
+
+/**
+ * Tracks the last webhook trigger per location for the legacy 5s debounce
+ * (a coarser guard on top of the per-(loc|weight) cooldown in fast-poll-manager).
+ */
+const lastWebhookTriggerByLocation = new Map<string, number>();
+const WEBHOOK_DEBOUNCE_MS = 5_000;
+
+/**
+ * Triggers the auto-checkout webhook (fire-and-forget).
+ * `webhookItems` contains only the items eligible per cooldown logic.
+ */
+function triggerCheckoutWebhook(
+  webhookUrl: string,
+  location: LocationStock,
+  webhookItems: { weight: string; qty: number }[],
+): void {
+  const now = Date.now();
+  const last = lastWebhookTriggerByLocation.get(location.location) ?? 0;
+  if (now - last < WEBHOOK_DEBOUNCE_MS) {
+    logger.debug(`[CheckStock] Webhook debounced for "${location.location}" (last trigger ${now - last}ms ago)`);
+    return;
+  }
+  lastWebhookTriggerByLocation.set(location.location, now);
+
+  logger.info(
+    `[CheckStock] 🛒 Triggering auto-checkout webhook for "${location.location}" (${webhookItems.length} item(s))`,
+  );
+
+  fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      trigger: 'stock-available',
+      timestamp: new Date().toISOString(),
+      location: location.location,
+      locationCode: location.locationCode,
+      items: webhookItems.map((i) => ({ weight: i.weight, qty: i.qty })),
+    }),
+  })
+    .then((res) => {
+      if (res.ok) {
+        logger.info('[CheckStock] ✓ Checkout webhook accepted');
+      } else {
+        logger.warn(`[CheckStock] Checkout webhook returned ${res.status}`);
+      }
+    })
+    .catch((err) => {
+      logger.error('[CheckStock] Failed to trigger checkout webhook:', err);
+    });
 }
