@@ -60,14 +60,25 @@ export interface LocationOption {
 
 /**
  * Creates a new browser context with standard desktop headers.
+ * Loads cookies from session.json (if available) to inherit Akamai sensor cookies.
  * Stealth is already applied at the browser level via chromium.use(StealthPlugin()).
  */
-function newContext(browser: Browser) {
+async function newContext(browser: Browser) {
+  // Try to load session state (cookies) from auto-checkout's session.json
+  let storageState: any = undefined;
+  try {
+    const raw = await fs.readFile('data/session.json', 'utf-8');
+    storageState = JSON.parse(raw);
+  } catch {
+    // No session file — use fresh context
+  }
+
   return browser.newContext({
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 900 },
     locale: 'id-ID',
+    ...(storageState ? { storageState } : {}),
   });
 }
 
