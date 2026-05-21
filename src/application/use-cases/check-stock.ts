@@ -2,7 +2,7 @@ import { AppConfig } from '../../app/config/env';
 import { logger } from '../../app/utils/logger';
 import { sleep } from '../../app/utils/retry';
 import { LocationStock } from '../../app/types/stock';
-import { scrapeAllLocationsHttp } from '../../infrastructure/logammulia/http-stock-client';
+import { scrapeAllLocationsPlaywright } from '../../infrastructure/logammulia/stock-scraper';
 import { loadSnapshot, saveSnapshot } from '../../infrastructure/persistence/snapshot-repository';
 import { loadTopics, saveTopics } from '../../infrastructure/persistence/topic-repository';
 import { compareSnapshots } from '../../domain/services/compare-stock';
@@ -160,7 +160,7 @@ export async function checkStock(config: AppConfig, status: BotStatus): Promise<
     };
 
     // ── Scrape all locations in parallel ────────────────────────────────────
-    await scrapeAllLocationsHttp(config, onResult);
+    await scrapeAllLocationsPlaywright(config, onResult);
 
     // Wait for all in-flight notifications before persisting snapshot
     await Promise.allSettled(notificationPromises);

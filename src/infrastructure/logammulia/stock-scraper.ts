@@ -164,6 +164,70 @@ async function getAvailableLocations(
  * Safe to call in parallel — each context has an isolated cookie jar,
  * so the session-based location change does not interfere with other contexts.
  */
+/**
+ * Persistent page for fast-polling a single location.
+ * Created once per location; subsequent polls reload the existing page,
+ * which is faster than fresh navigation and re-uses the Akamai-warmed session.
+ */
+let _fastPollPage: Page | null = null;
+let _fastPollLocation: string | null = null;
+let _fastPollContext: import('playwright').BrowserContext | null = null;
+
+/**
+ * Scrapes a single location via Playwright (browser-based).
+ * Uses a persistent page that is reloaded on each call — much faster than
+ * `scrapeLocationParallel` (which creates a fresh context every time).
+ * Akamai trusts browser fingerprints, so this avoids 403s that plague HTTP fast poll.
+ */
+export async function scrapeSingleLocationPlaywrightFast(
+  config: AppConfig,
+  locationCode: string,
+  locationLabel: string,
+  targetWeights: number[],
+): Promise<LocationStock> {
+  const browser = await getOrCreateBrowser(config);
+
+  // (Re)init persistent page when first called or location changed
+  if (!_fastPollPage || _fastPollPage.isClosed() || _fastPollLocation !== locationCode) {
+    if (_fastPollContext) {
+      await _fastPollContext.close().catch(() => undefined);
+    }
+    _fastPollContext = await newContext(browser);
+    _fastPollPage = await _fastPollContext.newPage();
+    _fastPollLocation = locationCode;
+
+    // Initial navigate + set location
+    await _fastPollPage.goto(STOCK_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await sleep(1_000);
+    await handleTransactionPurposePopup(_fastPollPage).catch(() => undefined);
+    const csrfToken = await getCsrfToken(_fastPollPage);
+    await changeLocation(_fastPollPage, locationCode, csrfToken);
+    await sleep(800);
+  } else {
+    // Just reload the stock page (faster than full nav, keeps cookies warm)
+    await _fastPollPage.reload({ waitUntil: 'domcontentloaded', timeout: 15_000 });
+    await sleep(300);
+  }
+
+  const items = await extractStockItems(_fastPollPage, config);
+  // Filter by target weights
+  const filtered = targetWeights.length > 0
+    ? items.filter((i) => {
+        const m = i.weight.match(/(\d+[,.]?\d*)/);
+        if (!m) return false;
+        const w = parseFloat(m[1].replace(',', '.'));
+        return targetWeights.some((t) => Math.abs(t - w) < 0.001);
+      })
+    : items;
+
+  return {
+    location: locationLabel,
+    locationCode,
+    items: filtered,
+    scrapedAt: formatIsoWithJakarta(),
+  };
+}
+
 async function scrapeLocationParallel(
   browser: Browser,
   loc: LocationOption,

@@ -2,7 +2,7 @@ import { AppConfig } from '../../app/config/env';
 import { logger } from '../../app/utils/logger';
 import { sleep } from '../../app/utils/retry';
 import { LocationStock } from '../../app/types/stock';
-import { scrapeSingleLocationFast } from '../../infrastructure/logammulia/http-stock-client';
+import { scrapeSingleLocationPlaywrightFast } from '../../infrastructure/logammulia/stock-scraper';
 
 /**
  * Adaptive fast-poll manager.
@@ -110,7 +110,8 @@ export function startFastPoll(
       const start = Date.now();
 
       try {
-        const result = await scrapeSingleLocationFast(
+        const result = await scrapeSingleLocationPlaywrightFast(
+          config,
           locationCode,
           locationLabel,
           config.fastPollWeights,
@@ -195,8 +196,8 @@ export function startScheduledFastPoll(
 
   const startMin = startHour * 60 + startMinute;
   const endMin = endHour * 60 + endMinute;
-  const normalIntervalMs = config.fastPollIntervalMs ?? 4000;
-  const turboIntervalMs = 1500;
+  const normalIntervalMs = config.fastPollIntervalMs ?? 3000;
+  const turboIntervalMs = 1000;
 
   logger.info(
     `[ScheduledFastPoll] ▶ Active hours ${startHour}:${String(startMinute).padStart(2, '0')}-${endHour}:${String(endMinute).padStart(2, '0')} WIB | Normal: ${normalIntervalMs}ms | Turbo: ${turboIntervalMs}ms for "${locationLabel}"`,
@@ -225,7 +226,8 @@ export function startScheduledFastPoll(
 
       const start = Date.now();
       try {
-        const result = await scrapeSingleLocationFast(
+        const result = await scrapeSingleLocationPlaywrightFast(
+          config,
           locationCode,
           locationLabel,
           config.fastPollWeights,
