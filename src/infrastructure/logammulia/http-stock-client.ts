@@ -67,6 +67,33 @@ interface LocationOption {
  */
 function createClient() {
   const jar = new CookieJar();
+
+  // Load cookies from auto-checkout's session.json if available — gives
+  // Akamai-trusted _abck/bm_sz cookies from a real browser login, which
+  // dramatically reduces WAF (403) probability during repeated polling.
+  // We try multiple paths since this scheduler may run alongside auto-checkout.
+  const candidatePaths = [
+    'data/session.json',                      // same project (auto-checkout mode)
+    '../lm-auto-checkout/data/session.json',  // sibling project (dev)
+    '/app/lm-auto-checkout/data/session.json', // sibling Docker mount
+  ];
+  for (const p of candidatePaths) {
+    try {
+      const raw = require('fs').readFileSync(p, 'utf-8');
+      const sessionData = JSON.parse(raw);
+      for (const c of sessionData.cookies || []) {
+        try {
+          const cleanDomain = (c.domain || '').replace(/^\./, '');
+          const cookieStr = `${c.name}=${c.value}; Domain=${cleanDomain}; Path=${c.path || '/'}`;
+          jar.setCookieSync(cookieStr, `https://${cleanDomain}${c.path || '/'}`);
+        } catch { /* skip */ }
+      }
+      break; // loaded one, stop
+    } catch {
+      // path doesn't exist or invalid — try next
+    }
+  }
+
   return wrapper(
     axios.create({
       jar,
